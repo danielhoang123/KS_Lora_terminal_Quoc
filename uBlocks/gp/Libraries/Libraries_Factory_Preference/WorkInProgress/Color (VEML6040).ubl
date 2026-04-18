@@ -1,0 +1,131 @@
+module 'Color (VEML6040)' Input
+author 'Josep Ferràndiz'
+version 1 0 
+choices veml6040_IT '40ms' '80ms' '160ms' '320ms' '640ms' '1280ms' 
+choices kidsIOT_I2Cports '2' '3' '4' '6' '7' '8' 
+choices veml6040_colorProps red green blue hue saturation value RGB HSV 
+description 'VEML6040 I2C color sensor
+Technical info:
+https://www.vishay.com/en/product/84276/'
+
+  spec ' ' '_veml6040_initialize' '#SVG#square11#00c612 _veml6040 initialize port _ : LED _ : time _' 'menu.kidsIOT_I2Cports bool menu.veml6040_IT' 2 true '640ms'
+  spec 'r' 'veml6040 get color' '#SVG#square11#00c612 veml6040 color'
+  spec 'r' 'veml6040 get values' '#SVG#square11#00c612 veml6040 _ of color _' 'menu.veml6040_colorProps num' 'hue' 0
+
+to '_veml6040_configuration' port LED IT {
+  comment 'Set LED on/off. In port 5 (UART) LED always is on'
+  digitalWriteOp (at ('[data:find]' port ('[data:makeList]' 2 3 4 6 7 8)) ('[data:makeList]' 2 26 27 23 16 5)) LED
+  comment 'Enable sensor and set integration time (IT)'
+  local 'it_value' (at ('[data:find]' IT ('[data:makeList]' '40ms' '80ms' '160ms' '320ms' '640ms' '1280ms')) ('[data:makeList]' (hexToInt '0') (hexToInt '10') (hexToInt '20') (hexToInt '30') (hexToInt '40') (hexToInt '50')))
+  i2cSet (hexToInt '10') 0 1
+  comment 'Shutdown color sensor'
+  i2cSet (hexToInt '10') 0 0
+  i2cSet (hexToInt '10') 0 (it_value | 1)
+  comment 'Enable color sensor'
+  i2cSet (hexToInt '10') 0 0
+  i2cSet (hexToInt '10') 0 it_value
+}
+
+to '_veml6040_initialize' port LED IT {
+  if ('[sensors:i2cExists]' (hexToInt '10')) {
+    if ((pushArgCount) == 1) {
+      comment 'Turn LED on and set IT to 320ms'
+      '_veml6040_configuration' port true '320ms'
+    }
+    if ((pushArgCount) == 2) {
+      '_veml6040_configuration' port LED '320ms'
+    }
+    if ((pushArgCount) == 3) {
+      '_veml6040_configuration' port LED IT
+    }
+  } else {
+    sayIt 'No color sensor VEML6040 detected!'
+  }
+}
+
+to 'veml6040 HSV' rgb_list {
+  local 'HSV' (newList 3)
+  local 'red' (((at 1 rgb_list) * 100) / 255)
+  local 'green' (((at 2 rgb_list) * 100) / 255)
+  local 'blue' (((at 3 rgb_list) * 100) / 255)
+  local 'Cmax' (maximum red green blue)
+  local 'Cmin' (minimum red green blue)
+  local 'delta' (Cmax - Cmin)
+  if (delta == 0) {
+    atPut 1 HSV 0
+  }
+  comment 'R'
+  if (Cmax == red) {
+    atPut 1 HSV (((60 * (((green - blue) * 100) / delta)) + 50) / 100)
+  }
+  comment 'G'
+  if (Cmax == green) {
+    atPut 1 HSV (((60 * ((((blue - red) + (delta * 2)) * 100) / delta)) + 50) / 100)
+  }
+  comment 'B'
+  if (Cmax == blue) {
+    atPut 1 HSV (((60 * ((((red - green) + (delta * 4)) * 100) / delta)) + 50) / 100)
+  }
+  if (Cmax > 0) {
+    atPut 2 HSV ((delta * 100) / Cmax)
+  }
+  atPut 3 HSV Cmax
+  return HSV
+}
+
+to 'veml6040 get color' {
+  if (veml6040_isInitialized) {
+    local '_veml6040_raw_RGBW' (newList 4)
+    local 'color16bits' ('[data:newByteArray]' 2)
+    for i 4 {
+      '[sensors:i2cWrite]' (hexToInt '10') ('[data:makeList]' (7 + i)) false
+      '[sensors:i2cRead]' (hexToInt '10') color16bits
+      comment 'Raw values R, G, B & white'
+      atPut i _veml6040_raw_RGBW ((at 1 color16bits) | ((at 2 color16bits) << 8))
+    }
+    if ((at 4 _veml6040_raw_RGBW) > 0) {
+      comment 'Normalizing to RGB'
+      local 'color16bits' ('[data:newByteArray]' 3)
+      atPut 1 color16bits (((at 1 _veml6040_raw_RGBW) * 255) / (at 4 _veml6040_raw_RGBW))
+      atPut 2 color16bits (((at 2 _veml6040_raw_RGBW) * 255) / (at 4 _veml6040_raw_RGBW))
+      atPut 3 color16bits (((at 3 _veml6040_raw_RGBW) * 255) / (at 4 _veml6040_raw_RGBW))
+      return (((at 1 color16bits) << 16) | (((at 2 color16bits) << 8) | (at 3 color16bits)))
+    } else {
+      return 0
+    }
+  } else {
+    return 'Color sensor is not initialized.'
+  }
+}
+
+to 'veml6040 get values' property color {
+  if (veml6040_isInitialized) {
+    local 'RGB_options' ('[data:makeList]' 'red' 'green' 'blue')
+    local 'HSV_options' ('[data:makeList]' 'hue' 'saturation' 'value')
+    local 'rgb_list' ('[data:makeList]' (255 & (color >> 16)) (255 & (color >> 8)) (255 & color))
+    if (property == 'RGB') {
+      return rgb_list
+    } (property == 'HSV') {
+      return ('veml6040 HSV' rgb_list)
+    } (('[data:find]' property RGB_options) > 0) {
+      return (at ('[data:find]' property RGB_options) rgb_list)
+    } (('[data:find]' property HSV_options) > 0) {
+      return (at ('[data:find]' property HSV_options) ('veml6040 HSV' rgb_list))
+    } else {
+      return ('[data:join]' 'Invalid option: ' property)
+    }
+  } else {
+    return 'Color sensor is not initialized'
+  }
+}
+
+to veml6040_isInitialized {
+  if ('[sensors:i2cExists]' (hexToInt '10')) {
+    local 'values' ('[data:newByteArray]' 2)
+    '[sensors:i2cRead]' (hexToInt '10') values
+    return ((at 1 values) != 0)
+  } else {
+    return (booleanConstant false)
+  }
+}
+

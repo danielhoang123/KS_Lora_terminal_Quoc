@@ -1,0 +1,201 @@
+module DUELink
+author MicroBlocks
+version 1 1 
+description 'Standard DUELink Library (partial).
+See https://www.duelink.com/docs/engine/stdlib'
+variables _dueUseI2C 
+
+  spec ' ' 'due_useI2C' 'DUELink useI2C _' 'bool' true
+  spec 'r' 'due_connected' 'DUELink connected?'
+  space
+  spec ' ' 'due_led' 'led high _ low _ count _' 'num num num' 100 100 5
+  spec ' ' 'due_beep' 'beep pin _ freq _ dur _' 'num num num' 3 440 100
+  space
+  spec ' ' 'due_dwrite' 'dwrite pin _ on _' 'num bool' 0
+  spec ' ' 'due_pwrite' 'pwrite pin _ pwm _' 'num num' 0 500
+  space
+  spec 'r' 'due_dread' 'dread pin _ pull _' 'num num' 0 0
+  spec 'r' 'due_vread' 'vread pin _' 'num' 0
+  space
+  spec ' ' 'due_btnen' 'btnen pin _ enable _' 'num bool' 0 1
+  spec 'r' 'due_btndown' 'btndown pin _' 'num' 0
+  spec 'r' 'due_btnup' 'btnup pin _' 'num num' 0 0
+  space
+  spec 'r' 'due_tickus' 'tickus'
+  spec 'r' 'due_tickms' 'tickms'
+  spec 'r' 'due_readvcc' 'readvcc'
+  space
+  spec ' ' 'due_sel' 'sel _' 'num' 1
+  spec 'r' 'due_info' 'info _' 'num' 1
+  space
+  spec ' ' 'due_run' 'run _' 'str' 'statled(100,100,5)'
+  spec 'r' 'due_runWithResult' 'run _ with result' 'str' 'version()'
+  space
+  spec ' ' '_due_send' '_due send _' 'str'
+  spec 'r' '_due_awaitResult' '_due await result'
+  spec 'r' '_due_awaitResultI2C' '_due await result (I2C)'
+  spec 'r' '_due_endsWithPrompt' '_due byte array ends with prompt _' 'str'
+  spec 'r' '_due_templateWith' '_due_template _ : with _ : _ : _ : _ : _ : _ : _ : _ : _ : _ : _ : _' 'str auto auto auto auto auto auto auto auto auto auto auto auto' 'test(%)' 123
+
+to '_due_awaitResult' {
+  if _dueUseI2C {return ('_due_awaitResultI2C')}
+  local 'result' ('[data:makeList]')
+  local 'startT' (millisOp)
+  comment 'Receive data until either the next prompt character or a timeout and return the result'
+  repeatUntil ((millisSince startT) > 1000) {
+    local 'buf' ('[serial:dueRecv]')
+    if ((size buf) != 0) {
+      for byte buf {
+        '[data:addLast]' byte result
+      }
+      if ('_due_endsWithPrompt' result) {
+        comment 'Result ends DUE prompt sequence: 10, 13, 62'
+        repeat 3 {
+          '[data:delete]' 'last' result
+        }
+        exitLoop
+      }
+    }
+    waitMicros 5
+  }
+  return ('[data:convertType]' result 'string')
+}
+
+to '_due_awaitResultI2C' {
+  local 'result' (newList 20)
+  '[data:delete]' 'all' result
+  local 'buf' ('[data:newByteArray]' 32)
+  local 'startT' (millisOp)
+  repeatUntil ((millisSince startT) > 100) {
+    '[sensors:i2cRead]' 82 buf
+    for byte buf {
+      if (byte != 255) {'[data:addLast]' byte result}
+    }
+    if ('_due_endsWithPrompt' result) {
+      comment 'Result ends DUE prompt sequence: 10, 13, 62'
+      repeat 3 {
+        '[data:delete]' 'last' result
+      }
+      exitLoop
+    }
+  }
+  return ('[data:convertType]' result 'string')
+}
+
+to '_due_endsWithPrompt' buffer {
+  local 'end' (size buffer)
+  if (end < 3) {
+    return (booleanConstant false)
+  }
+  return (and (or ((at end buffer) == 62) ((at end buffer) == 36)) (and ((at (end - 1) buffer) == 10) ((at (end - 2) buffer) == 13)))
+}
+
+to '_due_send' s {
+  comment 'Clear receive buffer.'
+  if _dueUseI2C {
+    '[sensors:i2cRead]' 82 ('[data:newByteArray]' 64)
+  } else {
+    local 'trash' ('[serial:dueRecv]')
+  }
+  if _dueUseI2C {
+    comment 'Assume command is < 64 bytes for now.'
+    '[sensors:i2cWrite]' 82 ('[data:join]' s ('[data:unicodeString]' 10))
+  } else {
+    s = ('[data:convertType]' s 'string')
+    local 'i' 1
+    repeatUntil (i > (size s)) {
+      local 'sent' ('[serial:dueSend]' s i)
+      i += sent
+      waitMillis ((sent / 10) + 1)
+    }
+    i += ('[serial:dueSend]' ('[data:unicodeString]' 10) 1)
+    waitMillis 2
+  }
+}
+
+to '_due_templateWith' s optionalArgs {
+  local 'parts' ('[data:split]' s '%')
+  local 'result' ('[data:makeList]')
+  for i ((size parts) - 1) {
+    '[data:addLast]' (at i parts) result
+    '[data:addLast]' (argOrDefault (i + 1) '') result
+  }
+  '[data:addLast]' (at 'last' parts) result
+  return ('[data:joinStrings]' result)
+}
+
+to due_beep pin freq dur {
+  due_run ('_due_templateWith' 'beep(%,%,%)' pin freq dur)
+}
+
+to due_btndown pin {
+  return (due_runWithResult ('_due_templateWith' 'btndown(%)' pin))
+}
+
+to due_btnen pin enable {
+  due_run ('_due_templateWith' 'btnen(%,%)' pin enable)
+}
+
+to due_btnup pin {
+  return (due_runWithResult ('_due_templateWith' 'btnup(%)' pin))
+}
+
+to due_connected {
+  local 'n' ('[data:convertType]' (random 1 9) 'string')
+  return ((due_runWithResult n) == n)
+}
+
+to due_dread pin pull {
+  return (due_runWithResult ('_due_templateWith' 'dread(%,%)' pin pull))
+}
+
+to due_dwrite pin onOff {
+  due_run ('_due_templateWith' 'dwrite(%,%)' pin onOff)
+}
+
+to due_info type {
+  return (due_runWithResult ('_due_templateWith' 'info(%)' type))
+}
+
+to due_led highPeriod lowPeriod count {
+  due_run ('_due_templateWith' 'statled(%,%,%)' highPeriod lowPeriod count)
+}
+
+to due_pwrite pin pwm {
+  due_run ('_due_templateWith' 'pwrite(%,%)' pin pwm)
+}
+
+to due_readvcc {
+  return (due_runWithResult 'readvcc()')
+}
+
+to due_run cmd {
+  '_due_send' cmd
+  local 'ignore' ('_due_awaitResult')
+}
+
+to due_runWithResult cmd {
+  '_due_send' cmd
+  return ('_due_awaitResult')
+}
+
+to due_sel n {
+  due_run ('_due_templateWith' 'sel(%)' n)
+}
+
+to due_tickms {
+  return (due_runWithResult 'tickms()')
+}
+
+to due_tickus {
+  return (due_runWithResult 'tickus()')
+}
+
+to due_useI2C useI2C {
+  _dueUseI2C = useI2C
+}
+
+to due_vread pin {
+  return (due_runWithResult ('_due_templateWith' 'vread(%)' pin))
+}
+
