@@ -1,0 +1,24 @@
+nss 5
+si 23
+so 19
+sck 18
+dio0 14
+rst 13
+
+arduino:
+ss 10
+rst 9
+dio0 8
+
+
+
+
+
+
+
+
+
+
+
+
+
