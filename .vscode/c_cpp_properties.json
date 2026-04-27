@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "D:/QuocHoang/VNEHC/KS_Lora_terminal_Quoc/libraries/LoRa/src",
+                "C:/Users/PC/AppData/Local/Arduino15/packages/esp32/hardware/esp32/3.3.7/cores/esp32",
+                "C:/Users/PC/AppData/Local/Arduino15/packages/esp32/hardware/esp32/3.3.7/libraries/SPI/src",
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ]
+        }
+    ],
+    "version": 4
+}
