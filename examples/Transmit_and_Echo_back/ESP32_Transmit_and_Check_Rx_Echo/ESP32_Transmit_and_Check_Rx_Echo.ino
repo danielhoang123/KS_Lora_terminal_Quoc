@@ -8,6 +8,7 @@
 #include <LoRa.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include "index_html.h"
 
 // define the pins used by the transceiver module
 #define ss 5
@@ -20,9 +21,13 @@ const char *password = "12345678";
 WebServer server(80);
 
 int counter = 0;
-
+unsigned long lastSendTime = 0;
 unsigned long ackStartTime = 0;
 const unsigned long ACK_TIMEOUT = 10000; // 10 giây
+unsigned long lastRTT = 0;
+int lastRSSI = 0;
+float lastSNR = 0;
+String lastMsg = "";
 
 String txMsg = "";
 String rxMsg = "";
@@ -42,285 +47,50 @@ enum State
 
 State currentState = RX_MODE;
 
-String htmlPage = R"rawliteral(
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LoRa Control Dashboard</title>
-    <style>
-        :root {
-            --bg-color: #121212;
-            --card-bg: #1e1e1e;
-            --primary-color: #00adb5;
-            --tx-color: #ff9f43;
-            --rx-color: #2ecc71;
-            --text-color: #eeeeee;
-            --border-radius: 12px;
-        }
+String getTimeString() {
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            padding: 20px;
-        }
+  unsigned long ms = millis();
 
-        .container {
-            width: 100%;
-            max-width: 500px;
-            background: var(--card-bg);
-            padding: 25px;
-            border-radius: var(--border-radius);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
+  unsigned long totalSeconds = ms / 1000;
+  unsigned int hours = totalSeconds / 3600;
+  unsigned int minutes = (totalSeconds % 3600) / 60;
+  unsigned int seconds = totalSeconds % 60;
 
-        h2 { color: var(--primary-color); margin-bottom: 25px; font-weight: 600; }
+  char buffer[9]; // "hh:mm:ss" = 8 ký tự + null
+  sprintf(buffer, "%02u:%02u:%02u", hours, minutes, seconds);
 
-        /* Input Group */
-        .input-group {
-            position: relative;
-            margin-bottom: 15px;
-        }
-
-        input[type="text"] {
-            width: 100%;
-            padding: 12px 40px 12px 15px;
-            border-radius: var(--border-radius);
-            border: 1px solid #333;
-            background: #252525;
-            color: white;
-            box-sizing: border-box;
-            outline: none;
-            transition: 0.3s;
-        }
-
-        input[type="text"]:focus { border-color: var(--primary-color); }
-
-        .clear-icon {
-            position: absolute;
-            right: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            cursor: pointer;
-            color: #ff4757;
-            font-size: 18px;
-        }
-
-        /* Buttons */
-        .btn-row { display: flex; gap: 10px; margin-bottom: 20px; }
-        
-        button {
-            flex: 1;
-            padding: 12px;
-            border: none;
-            border-radius: var(--border-radius);
-            cursor: pointer;
-            font-weight: bold;
-            transition: 0.3s;
-            text-transform: uppercase;
-        }
-
-        #sendBtn { background-color: var(--primary-color); color: white; }
-        #sendBtn:hover { background-color: #008c94; opacity: 0.9; }
-        #sendBtn:disabled { background-color: #444; cursor: not-allowed; }
-
-        .btn-clear { background-color: #333; color: #ccc; }
-        .btn-clear:hover { background-color: #444; }
-
-        /* Log Area */
-        .log-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 20px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 5px;
-        }
-
-        #log {
-            height: 250px;
-            background: #151515;
-            border-radius: var(--border-radius);
-            padding: 15px;
-            margin-top: 10px;
-            overflow-y: auto;
-            text-align: left;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 14px;
-            border: 1px solid #222;
-            line-height: 1.6;
-        }
-
-        .tx { color: var(--tx-color); font-weight: bold; }
-        .rx { color: var(--rx-color); font-weight: bold; }
-
-        /* Mode Selection */
-        .mode-container {
-            margin-top: 25px;
-            background: #252525;
-            padding: 15px;
-            border-radius: var(--border-radius);
-        }
-
-        .radio-group {
-            display: flex;
-            justify-content: center;
-            gap: 30px;
-            margin-bottom: 15px;
-        }
-
-        .radio-group label { cursor: pointer; display: flex; align-items: center; gap: 8px; }
-
-        select {
-            width: 100%;
-            padding: 10px;
-            border-radius: 8px;
-            background: #333;
-            color: white;
-            border: none;
-            outline: none;
-        }
-
-        select:disabled { opacity: 0.3; }
-
-        /* Scrollbar mini */
-        #log::-webkit-scrollbar { width: 6px; }
-        #log::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
-    </style>
-</head>
-<body>
-
-<div class="container">
-    <h2>LoRa Dashboard</h2>
-
-    <div class="input-group">
-        <input type="text" id="msg" placeholder="Nhập tin nhắn nội dung...">
-        <span class="clear-icon" onclick="clearInput()">✖</span>
-    </div>
-
-    <div class="btn-row">
-        <button id="sendBtn" onclick="sendMsg()">Gửi Lệnh</button>
-        <button class="btn-clear" onclick="clearLog()">Xóa Log</button>
-    </div>
-
-    <div class="log-header">
-        <span style="font-size: 0.9em; color: #888;">LỊCH SỬ HOẠT ĐỘNG</span>
-    </div>
-    <div id="log"></div>
-
-    <div class="mode-container">
-        <div class="radio-group">
-            <label>
-                <input type="radio" name="mode" value="manual" checked onchange="setMode('manual')"> Thủ công
-            </label>
-            <label>
-                <input type="radio" name="mode" value="auto" onchange="setMode('auto')"> Tự động
-            </label>
-        </div>
-
-        <select id="intervalSelect" disabled>
-            <option value="7000">Gửi mỗi 7 giây</option>
-            <option value="10000">Gửi mỗi 10 giây</option>
-            <option value="30000">Gửi mỗi 30 giây</option>
-        </select>
-    </div>
-</div>
-
-<script>
-    let autoInterval = null;
-
-    // Cập nhật dữ liệu từ Server (Gộp 2 setInterval cũ làm 1)
-    setInterval(() => {
-        fetch("/data")
-            .then(res => res.json())
-            .then(data => {
-                if (data.log && data.log !== "") {
-                    const logDiv = document.getElementById("log");
-                    
-                    // Xử lý định dạng Tx|Nội dung hoặc Rx|Nội dung
-                    let parts = data.log.split("|");
-                    let line = "";
-                    
-                    if (parts.length >= 2) {
-                        let type = parts[0].trim();
-                        let content = parts.slice(1).join("|");
-                        let colorClass = (type === "Tx") ? "tx" : "rx";
-                        line = `<span class="${colorClass}">${type}</span>: ${content}`;
-                    } else {
-                        line = `<span>${data.log}</span>`;
-                    }
-
-                    logDiv.innerHTML += `<div>${line}</div>`;
-                    logDiv.scrollTop = logDiv.scrollHeight;
-                }
-            })
-            .catch(err => console.log("Lỗi fetch data:", err));
-    }, 1000);
-
-    function sendMsg() {
-        const msgInput = document.getElementById("msg");
-        const msg = msgInput.value;
-        if(!msg && document.querySelector('input[name="mode"]:checked').value === "manual") return;
-        
-        fetch("/send?msg=" + encodeURIComponent(msg || "Test Lora"));
-    }
-
-    function clearLog() {
-        document.getElementById("log").innerHTML = "";
-    }
-
-    function clearInput() {
-        document.getElementById("msg").value = "";
-    }
-
-    function setMode(mode) {
-        const select = document.getElementById("intervalSelect");
-        const sendBtn = document.getElementById("sendBtn");
-
-        if (mode === "manual") {
-            select.disabled = true;
-            sendBtn.disabled = false;
-            if (autoInterval) {
-                clearInterval(autoInterval);
-                autoInterval = null;
-            }
-        } else {
-            select.disabled = false;
-            sendBtn.disabled = true;
-            startAutoSend();
-        }
-    }
-
-    function startAutoSend() {
-        if (autoInterval) clearInterval(autoInterval);
-        const interval = parseInt(document.getElementById("intervalSelect").value);
-        
-        // Gửi ngay lập tức phát đầu tiên
-        sendMsg(); 
-        // Sau đó lặp lại
-        autoInterval = setInterval(sendMsg, interval);
-    }
-
-    document.getElementById("intervalSelect").addEventListener("change", () => {
-        const mode = document.querySelector('input[name="mode"]:checked').value;
-        if (mode === "auto") startAutoSend();
-    });
-</script>
-
-</body>
-</html>
-)rawliteral"
-;
+  return String(buffer);
+}
 
 void handleRoot()
 {
-    server.send(200, "text/html", htmlPage);
+    server.send(200, "text/html", index_html);
 }
+
+// void handleSend()
+// {
+//     String msg = server.arg("msg");
+
+//     if (msg.length() > 0)
+//     {
+//         String timeStr = getTimeString();
+
+//         // Gộp timestamp + message
+//         String fullMsg = timeStr + "|" + msg;
+
+//         LoRa.beginPacket();
+//         LoRa.print(fullMsg);
+//         LoRa.endPacket();
+
+//         // 🔥 log TX
+//         logLine = "Tx|" + fullMsg;
+//         newLogAvailable = true;
+
+//         Serial.println("Tx: " + fullMsg);
+//     }
+
+//     server.send(200, "text/plain", "OK");
+// }
 
 void handleSend()
 {
@@ -328,19 +98,24 @@ void handleSend()
 
     if (msg.length() > 0)
     {
+        String timeStr = getTimeString();
+        unsigned long now = millis();
+
+        // 📦 Packet gửi đi (giữ nguyên để tính RTT)
+        String fullMsg = timeStr + "|" + String(now) + "|" + msg;
+
         LoRa.beginPacket();
-        LoRa.print(msg);
+        LoRa.print(fullMsg);
         LoRa.endPacket();
 
-        // 🔥 log TX
-        logLine = "Tx|" + msg;
-        newLogAvailable = true;
+        Serial.println("Tx: " + fullMsg);
 
-        Serial.println("Tx: " + msg);
+        // ✅ Log hiển thị GUI (đã đúng format yêu cầu)
+        logLine = "[TX] " + timeStr + " | " + msg;
+        newLogAvailable = true;
     }
 
     server.send(200, "text/plain", "OK");
-    Serial.println(">>> handleSend CALLED <<<");  // 🔥 thêm dòng này
 }
 
 void handleData()
@@ -361,16 +136,6 @@ void handleData()
     {
         server.send(200, "application/json", "{\"log\":\"\"}");
     }
-}
-
-void sendLoRa(String msg)
-{
-    LoRa.beginPacket();
-    LoRa.print(msg);
-    LoRa.endPacket();
-
-    Serial.print("Da gui: ");
-    Serial.println(msg);
 }
 
 String readSerialLine()
@@ -404,52 +169,139 @@ String readSerialLine()
     return ""; // chưa có dữ liệu hoàn chỉnh
 }
 
+// void handleLoRaReceive()
+// {
+//     int packetSize = LoRa.parsePacket();
+
+//     if (packetSize)
+//     {
+//         String rxMsg = "";
+
+//         while (LoRa.available())
+//         {
+//             rxMsg += (char)LoRa.read();
+//         }
+
+//         unsigned long t2 = millis();
+
+//         Serial.println("Nhan duoc: " + rxMsg);
+
+//         // 🔥 Tách timestamp và data
+//         int sepIndex = rxMsg.indexOf('|');
+
+//         if (sepIndex > 0)
+//         {
+//             String t1_str = rxMsg.substring(0, sepIndex);
+//             String data = rxMsg.substring(sepIndex + 1);
+
+//             unsigned long t1 = t1_str.toInt();
+
+//             unsigned long rtt = t2 - t1;
+
+//             Serial.print("RTT: ");
+//             Serial.print(rtt);
+//             Serial.println(" ms");
+
+//             // Log về web
+//             logLine = "Rx|" + data + "|RTT:" + String(rtt) + "ms";
+//             newLogAvailable = true;
+//         }
+//         else
+//         {
+//             Serial.println("Packet sai format!");
+//         }
+//     }
+// }
+
 void handleLoRaReceive()
 {
     int packetSize = LoRa.parsePacket();
 
     if (packetSize)
     {
-        rxMsg = "";
+        String received = "";
 
         while (LoRa.available())
         {
-            rxMsg += (char)LoRa.read();
+            received += (char)LoRa.read();
         }
 
-        Serial.print("Nhan duoc: ");
-        Serial.println(rxMsg);
+
+        
+        int first = received.indexOf('|');
+        int second = received.indexOf('|', first + 1);
+
+        if (first == -1 || second == -1) return;
+
+        String timeStr = received.substring(0, first);
+
+        unsigned long sentMillis = received.substring(first + 1, second).toInt();
+        if (sentMillis == 0) return;
+        String msg = received.substring(second + 1);
+
+        unsigned long now = millis();
+        unsigned long rtt = now - sentMillis;
+
+        // 🔥 LƯU LẠI
+        lastRTT = rtt;
+        lastRSSI = LoRa.packetRssi();
+        lastSNR = LoRa.packetSnr();
+        lastMsg = msg;
+
+        // ✅ Log Serial (debug)
+        Serial.printf("RX: %s | RTT: %lu ms | RSSI: %d | SNR: %.2f\n",
+                      msg.c_str(), rtt, lastRSSI, lastSNR);
+
+        // ✅ Log Web GUI (đúng format yêu cầu)
+        logLine = "[RX] " + msg +
+                  " [RSSI] " + String(lastRSSI) + "dBm" +
+                  " [SNR] " + String(lastSNR, 2) + "dB" +
+                  " [RTT] " + String(rtt) + "ms";
+
+        newLogAvailable = true;
     }
+}
+
+void handleStatus()
+{
+    String json = "{";
+    json += "\"rtt\":" + String(lastRTT) + ",";
+    json += "\"rssi\":" + String(lastRSSI) + ",";
+    json += "\"snr\":" + String(lastSNR, 2) + ",";
+    json += "\"msg\":\"" + lastMsg + "\"";
+    json += "}";
+
+    server.send(200, "application/json", json);
 }
 
 bool handleWaitAck()
 {
     int packetSize = LoRa.parsePacket();
 
-    // Nếu nhận được phản hồi
     if (packetSize)
     {
-        rxMsg = "";
+        String rxMsg = "";
 
         while (LoRa.available())
         {
             rxMsg += (char)LoRa.read();
         }
 
-        Serial.print("Nhan ACK: ");
-        Serial.println(rxMsg);
+        Serial.println("Nhan ACK: " + rxMsg);
 
-        return true; // đã nhận ACK
+        // 🔥 Bạn có thể parse ở đây để lấy:
+        // time_rx, RSSI, SNR
+
+        return true;
     }
 
-    // Kiểm tra timeout
     if (millis() - ackStartTime > ACK_TIMEOUT)
     {
-        Serial.println("Timeout! Mat goi");
-        return false; // timeout
+        Serial.println("Timeout!");
+        return false;
     }
 
-    return false; // vẫn đang chờ
+    return false;
 }
 
 void setup()
@@ -469,6 +321,7 @@ void setup()
     server.on("/", handleRoot);
     server.on("/send", handleSend);
     server.on("/data", handleData);
+    server.on("/status", handleStatus);
     server.begin();
 
     // setup LoRa transceiver module
@@ -596,25 +449,26 @@ void loop()
     //     break;
     // }
     server.handleClient();
-    int packetSize = LoRa.parsePacket();
-    if (packetSize)
-    {
-        String msg = "";
+    // int packetSize = LoRa.parsePacket();
+    // if (packetSize)
+    // {
+    //     String msg = "";
 
-        while (LoRa.available())
-        {
-            msg += (char)LoRa.read();
-        }
+    //     while (LoRa.available())
+    //     {
+    //         msg += (char)LoRa.read();
+    //     }
 
-        int rssi = LoRa.packetRssi();
-        float snr = LoRa.packetSnr();
+    //     int rssi = LoRa.packetRssi();
+    //     float snr = LoRa.packetSnr();
 
-        logLine = "Rx|" + msg +
-                  " | RSSI:" + String(rssi) +
-                  " | SNR:" + String(snr);
+    //     logLine = "Rx|" + msg +
+    //               " | RSSI:" + String(rssi) +
+    //               " | SNR:" + String(snr);
 
-        newLogAvailable = true;
+    //     newLogAvailable = true;
 
-        Serial.println(logLine);
-    }
+    //     Serial.println(logLine);
+    // }
+    handleLoRaReceive();
 }

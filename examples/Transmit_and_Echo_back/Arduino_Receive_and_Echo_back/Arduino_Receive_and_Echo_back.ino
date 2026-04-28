@@ -48,22 +48,47 @@ void basicReceivePackage()
 //     {
 //         receivedMsg = "";
 
-//         // Đọc toàn bộ dữ liệu nhận được
+//         // Đọc dữ liệu
 //         while (LoRa.available())
 //         {
 //             receivedMsg += (char)LoRa.read();
 //         }
 
-//         // In ra Serial để debug
+//         // Lấy RSSI và SNR
+//         rssi = LoRa.packetRssi();
+//         snr = LoRa.packetSnr();
+
+//         // In debug
 //         Serial.print("Nhan duoc: ");
 //         Serial.println(receivedMsg);
 
-//         // Gửi lại đúng message đó
+//         Serial.print("RSSI: ");
+//         Serial.print(rssi);
+//         Serial.print(" dBm | SNR: ");
+//         Serial.print(snr);
+//         Serial.println(" dB");
+
+//         // ===== TÁCH CHUỖI =====
+//         int idx = receivedMsg.indexOf('|');
+//         String dataOnly = "";
+
+//         if (idx != -1)
+//         {
+//             dataOnly = receivedMsg.substring(idx + 1);
+//         }
+//         else
+//         {
+//             // Nếu không có dấu '|', fallback luôn
+//             dataOnly = receivedMsg;
+//         }
+
+//         // ===== ECHO LẠI CHỈ DATA =====
 //         LoRa.beginPacket();
-//         LoRa.print(receivedMsg);
+//         LoRa.print(dataOnly);
 //         LoRa.endPacket();
 
-//         Serial.println("Da gui lai message");
+//         Serial.print("Echo lai: ");
+//         Serial.println(dataOnly);
 //     }
 // }
 
@@ -73,19 +98,16 @@ void handleLoRaReceiveAndReply()
 
     if (packetSize)
     {
-        receivedMsg = "";
+        String receivedMsg = "";
 
-        // Đọc dữ liệu
         while (LoRa.available())
         {
             receivedMsg += (char)LoRa.read();
         }
 
-        // Lấy RSSI và SNR
-        rssi = LoRa.packetRssi();
-        snr = LoRa.packetSnr();
+        int rssi = LoRa.packetRssi();
+        float snr = LoRa.packetSnr();
 
-        // In debug
         Serial.print("Nhan duoc: ");
         Serial.println(receivedMsg);
 
@@ -95,16 +117,12 @@ void handleLoRaReceiveAndReply()
         Serial.print(snr);
         Serial.println(" dB");
 
-        // ===== Gửi lại kèm RSSI + SNR =====
-        // String replyMsg = receivedMsg + 
-        //                   " | RSSI:" + String(rssi) + 
-        //                   " | SNR:" + String(snr);
-
+        // 🔁 Echo NGUYÊN GÓI
         LoRa.beginPacket();
         LoRa.print(receivedMsg);
         LoRa.endPacket();
 
-        Serial.println("Da gui lai message");
+        Serial.println("Da echo lai");
     }
 }
 
